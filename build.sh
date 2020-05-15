@@ -1,2 +1,11 @@
 mkdir -p ./bin/
-clang -std=c99 `sdl2-config --cflags` -g -o ./bin/demon_teacher ./src/main.c `sdl2-config --static-libs`
+pushd ./bin/
+clang                       \
+    -std=c99                \
+    -I../lib/include        \
+    `sdl2-config --cflags`  \
+    -g                      \
+    -o ./demon_teacher      \
+    ../src/main.c           \
+    `sdl2-config --static-libs`
+popd

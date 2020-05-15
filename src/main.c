@@ -1,4 +1,17 @@
-#include <unistd.h>
+#ifdef WINDOWS
+    #include <windows.h>
+    #include <malloc.h>
+
+    // MSVC doesn't support C99 because it sucks.
+    #define StackAlloc(type, name, size) type* name = (type*)_malloca(size)
+    #define StackFree(ptr) _freea(ptr)
+#else
+    #include <unistd.h>
+
+    #define StackAlloc(type, name, size) type name[size]
+    #define StackFree(ptr)
+#endif
+
 #include <stdbool.h>
 #include <string.h>
 #include <SDL.h>
@@ -20,7 +33,7 @@ typedef float              f32;
 #include "game.c"
 
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include <stb_image.h>
 
 #define Kilobytes(count) ((count) * 1024LL)
 #define Megabytes(count) (Kilobytes(count) * 1024LL)
@@ -33,7 +46,7 @@ typedef float              f32;
 u32 NumCpus() {
     u32 core_count = 1;
 
-#ifdef WIN32
+#ifdef WINDOWS
     SYSTEM_INFO sysinfo;
     GetSystemInfo(&sysinfo);
     core_count = sysinfo.dwNumberOfProcessors;
@@ -220,9 +233,10 @@ i32 main(i32 argc, char** argv) {
         // Create tracking variables for multi-threading.
         u32 num_cpus = NumCpus() - 1;
 
-        struct SDL_Thread* threads     [num_cpus];
-        struct ThreadInfo  thread_infos[num_cpus];
-        struct JobQueue    job_queue = {};
+        StackAlloc(struct SDL_Thread*, threads     , num_cpus);
+        StackAlloc(struct ThreadInfo , thread_infos, num_cpus);
+
+        struct JobQueue job_queue = {};
 
         job_queue.semaphore = SDL_CreateSemaphore(0);
         job_queue.pool_size = num_cpus;
@@ -448,6 +462,9 @@ i32 main(i32 argc, char** argv) {
         }
 
         SDL_DestroySemaphore(job_queue.semaphore);
+
+        StackFree(threads);
+        StackFree(thread_infos);
     } else {
         SDL_Log("Failed to initialise SDL. %s\n", SDL_GetError());
     }

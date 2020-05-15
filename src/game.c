@@ -81,7 +81,7 @@ void UpdateAndRender(
     u32 chunks_per_height  = pixel_height / pixels_per_chunk_height;
     u32 total_chunks       = chunks_per_width * chunks_per_height;
 
-    struct RenderInfo jobs[total_chunks];
+    StackAlloc(struct RenderInfo, jobs, total_chunks);
 
     for (u32 y = 0; y < chunks_per_height; y += 1) {
         for (u32 x = 0; x < chunks_per_width; x += 1) {
@@ -107,4 +107,6 @@ void UpdateAndRender(
     }
 
     CompleteRemainingWork(queue);
+
+    StackFree(jobs);
 }

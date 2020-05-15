@@ -1,14 +1,24 @@
 @echo off
 
-for /r "C:\Program Files (x86)" %%a in (*) do if "%%~nxa"=="vcvarsall.bat" set vcvarsall=%%~dpnxa
+rem Update this path if this doesn't work
+call "Program Files (x86)\Microsoft Visual Studios\2019\Community\VC\Auxiliary\Build\vcvars64.bat"
 
-if defined vcvarsall (
-    call vcvarsall x64
+mkdir .\bin
+pushd .\bin
 
-    mkdir .\bin
-    pushd .\bin
-    cl /O2 /Fe:demon_teacher ..\src\main.c
-    popd
-) else (
-    echo You need to install Visual Studios
-)
+cl                                        ^
+    nologo                                ^
+    /TC                                   ^
+    /I ../lib/windows/SDL2-2.0.12/include ^
+    /I ../lib/include                     ^
+    /D WINDOWS                            ^
+    /O2                                   ^
+    ..\src\main.c
+
+link                                      ^
+    nologo                                ^
+    /libpath:../lib/windows/SDL2-2.0.12/  ^
+    main.obj                              ^
+    SDL2.lib
+
+popd
