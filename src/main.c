@@ -225,6 +225,40 @@ void InitOffscreenBuffer(
 }
 
 // ==============================================
+// Game Memory
+// ==============================================
+
+struct Memory InitMemory(u64 permanent_size, u64 transient_size) {
+    // TODO(Hector):
+    // Ideally I would like to use mmap and munmap for the memory allocations, but since this is a game
+    // jam and I need it to run on windows...
+    // During internal builds once this is using mmap, I want to specify the base addres so that
+    // when we reload the game library all the pointers are still valid.
+// #ifdef INTERNAL
+//             u64 base_address = ...;
+// #else
+//             u64 base_address = 0;
+// #endif
+
+    u64   total_size   = permanent_size + transient_size;
+    void* total_memory = calloc(1, total_size);
+
+    struct Memory memory  = {};
+    memory.permanent_size = permanent_size;
+    memory.transient_size = transient_size;
+    memory.permanent      = total_memory;
+    memory.transient      = ((u8*)total_memory) + permanent_size;
+
+    return(memory);
+}
+
+void FreeMemory(struct Memory memory) {
+    // Since the permanent section is the pointer to the allocated address that's
+    // the only thing we need to free.
+    free(memory.permanent);
+}
+
+// ==============================================
 // Entry Point
 // ==============================================
 
@@ -263,26 +297,18 @@ i32 main(i32 argc, char** argv) {
         struct SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
 
         if (window != NULL && renderer != NULL) {
-            bool is_close_requested = false;
-
-            // TODO(Hector):
-            // Ideally I would like to use mmap and munmap for the memory allocations, but since this is a game
-            // jam and I need it to run on windows...
-            struct Memory memory  = {};
-            memory.permanent_size = Megabytes(64);
-            memory.permanent      = calloc(1, memory.permanent_size);
-            memory.transient_size = Gigabytes(4);
-            memory.transient      = calloc(1, memory.transient_size);
+            bool   is_close_requested = false;
+            struct Memory memory      = InitMemory(Megabytes(64), Gigabytes(4));
 
             // InputState input_state = {};
 
             struct OffscreenBuffer offscreen_buffer = {};
-            struct SDL_Texture* texture;
+            struct SDL_Texture*    texture;
             InitOffscreenBuffer(window, renderer, &texture, &offscreen_buffer);
 
             // SoundBuffer sound_buffer = {};
 
-            if (memory.permanent && memory.transient) {
+            if (memory.permanent) {
                 i32 joystick_count = SDL_NumJoysticks();
 
                 SDL_GameController* controller = NULL;
@@ -437,8 +463,7 @@ i32 main(i32 argc, char** argv) {
                 SDL_GameControllerClose(controller);
                 SDL_HapticClose(haptic);
 
-                free(memory.permanent);
-                free(memory.transient);
+                FreeMemory(memory);
             } else {
                 SDL_Log("Unable to allocate memory.");
             }

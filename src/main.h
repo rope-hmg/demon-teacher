@@ -3,10 +3,10 @@
 // ==============================================
 
 struct Memory {
-    void*  permanent;
-    size_t permanent_size;
-    void*  transient;
-    size_t transient_size;
+    void* permanent;
+    u64   permanent_size;
+    void* transient;
+    u64   transient_size;
 };
 
 struct InputState {
