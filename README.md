@@ -25,9 +25,9 @@ w          - Move forward
 a          - Move left
 s          - Move backwards
 d          - Move right
-q          - 
-e          - 
-left shift - 
+q          - Inventory
+e          - Action / Attack
+left shift - Maintain facing direction
 ```
 
 ## Left Handed
@@ -37,13 +37,13 @@ i           - Move forward
 j           - Move left
 k           - Move backwards
 l           - Move right
-o           - 
-u           - 
-right shift - 
+o           - Inventory
+u           - Action / Attack
+right shift - Maintain facing direction
 ```
 
 ## General
 
 ```
-escape - Display menu
+escape - Exit game
 ```
