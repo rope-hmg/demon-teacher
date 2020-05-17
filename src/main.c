@@ -1,3 +1,7 @@
+// TODO(Hector):
+// 1. Clean up the code
+// 2. Create a windows platform layer.
+
 #ifdef WINDOWS
     #include <windows.h>
     #include <malloc.h>
@@ -28,6 +32,7 @@ typedef double             f64;
 typedef float              f32;
 
 #define ArrayCount(array) (sizeof(array) / sizeof(array[0]))
+#define Assert(condition) SDL_assert(condition)
 
 #include "main.h"
 #include "game.c"
@@ -38,6 +43,7 @@ typedef float              f32;
 #define Kilobytes(count) ((count) * 1024LL)
 #define Megabytes(count) (Kilobytes(count) * 1024LL)
 #define Gigabytes(count) (Megabytes(count) * 1024LL)
+#define Terabytes(count) (Gigabytes(count) * 1024LL)
 
 // ==============================================
 // Platform Utilities
@@ -259,6 +265,96 @@ void FreeMemory(struct Memory memory) {
 }
 
 // ==============================================
+// File IO
+// ==============================================
+
+struct DebugFile DebugOpenFile(char* filename) {
+    struct DebugFile  file = {};
+    struct SDL_RWops* io   = SDL_RWFromFile(filename, "r");
+
+    if (io) {
+        u64 size = SDL_RWsize(io);
+        file.data = malloc(size);
+
+        SDL_RWread(io, file.data, size, 1);
+        SDL_RWclose(io);
+    }
+
+    return(file);
+}
+
+void DebugCloseFile(struct DebugFile file) {
+    free(file.data);
+}
+
+// ==============================================
+// Timing Info
+// ==============================================
+
+struct TimingInfo {
+    i32 game_update_hz;
+    f32 target_seconds_per_frame;
+};
+
+struct TimingInfo GetTimingInfo(struct SDL_Window* window) {
+    struct TimingInfo timing_info = {};
+
+    // If we fail to get the display mode information or the refresh rate is
+    // unspecified or for what ever reason, we will default to 60Hz.
+    i32 refresh_rate  = 60;
+    i32 display_index = SDL_GetWindowDisplayIndex(window);
+
+    SDL_DisplayMode display_mode;
+    if (SDL_GetDesktopDisplayMode(display_index, &display_mode) == 0) {
+        refresh_rate = (display_mode.refresh_rate == 0)
+            ? refresh_rate
+            : display_mode.refresh_rate;
+    }
+
+    timing_info.game_update_hz           = refresh_rate;
+    timing_info.target_seconds_per_frame = Reciprocal((f32)refresh_rate);
+
+    return(timing_info);
+}
+
+// ==============================================
+// Audio
+// ==============================================
+
+void OpenAudio(SDL_AudioDeviceID* device, struct AudioBuffer* buffer) {
+    // TODO(Hector):
+    // Work out how big these buffers actually need to be.
+    i32 audio_frequency  = 48000;
+    i32 channel_count    = 2;
+    i32 bytes_per_sample = sizeof(i16) * channel_count;
+    // i32 buffer_size      = audio_frequency * bytes_per_sample;
+    // i32 buffer_size      = 1024;
+
+    SDL_AudioSpec audio_spec = {};
+    audio_spec.freq     = audio_frequency;
+    audio_spec.format   = AUDIO_S16LSB;
+    audio_spec.channels = channel_count;
+    audio_spec.samples  = audio_frequency * sizeof(u16);
+
+    char*          device_name     = NULL;
+    bool           is_capture      = false;
+    SDL_AudioSpec* desired         = NULL;
+    i32            allowed_changes = 0;
+
+    *device = SDL_OpenAudioDevice(device_name, is_capture, &audio_spec, desired, allowed_changes);
+
+    // buffer->samples            = malloc(buffer_size);
+    // buffer->samples_size       = buffer_size;
+    buffer->samples_per_second = audio_spec.freq;
+    buffer->bytes_per_sample   = bytes_per_sample;
+}
+
+void CloseAudio(struct AudioBuffer buffer) {
+    // free(buffer.samples);
+    SDL_CloseAudio();
+}
+
+// ==============================================
 // Entry Point
 // ==============================================
 
@@ -296,94 +392,56 @@ i32 main(i32 argc, char** argv) {
 
         struct SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_PRESENTVSYNC);
 
+        SDL_ShowCursor(SDL_DISABLE);
+
         if (window != NULL && renderer != NULL) {
             bool   is_close_requested = false;
             struct Memory memory      = InitMemory(Megabytes(64), Gigabytes(4));
-
-            // InputState input_state = {};
 
             struct OffscreenBuffer offscreen_buffer = {};
             struct SDL_Texture*    texture;
             InitOffscreenBuffer(window, renderer, &texture, &offscreen_buffer);
 
-            // SoundBuffer sound_buffer = {};
-
             if (memory.permanent) {
-                i32 joystick_count = SDL_NumJoysticks();
+                struct TimingInfo timing_info = GetTimingInfo(window);
 
-                SDL_GameController* controller = NULL;
-                SDL_Joystick*       joystick   = NULL;
-                SDL_Haptic*         haptic     = NULL;
+                SDL_AudioDeviceID audio_device;
+                struct AudioBuffer audio_buffer;
+                OpenAudio(&audio_device, &audio_buffer);
 
-                for (i32 i = 0; i < joystick_count; i += 1) {
-                    if (SDL_IsGameController(i)) {
-                        controller = SDL_GameControllerOpen(i);
-
-                        if (controller) {
-                            joystick = SDL_GameControllerGetJoystick(controller);
-                            haptic   = SDL_HapticOpenFromJoystick(joystick);
-                            break;
-                        } else {
-                            SDL_Log("Could not initialise controller. %s\n", SDL_GetError());
-                        }
-                    }
-                }
-
-                // NOTE(Hector):
-                // We don't need this if to guard the SDL functions, we just don't want to
-                // try if no controller was even enabled.
-                if (controller != NULL) {
-                    if (SDL_HapticRumbleInit(haptic) != 0) {
-                        SDL_HapticClose(haptic);
-                        haptic = NULL;
-                        SDL_Log("Failed to initialise haptic feedback. %s\n", SDL_GetError());
-                    }
-                }
-
-                SDL_AudioSpec audio_spec = {};
-                audio_spec.freq     = 48000;
-                audio_spec.format   = AUDIO_S16LSB;
-                audio_spec.channels = 2;
-                audio_spec.samples  = 4096;
-                audio_spec.callback = NULL;
-                audio_spec.userdata = NULL;
-
-                SDL_AudioDeviceID device = -1;
-                if (SDL_OpenAudio(&audio_spec, NULL) == 0) {
-                    // We're using SDL_OpenAudio, so the device id is always 1.
-                    device = 1;
-                } else {
-                    SDL_Log("Unable to initialise audio. %s\n", SDL_GetError());
-                }
-
-                if (audio_spec.format == AUDIO_S16LSB) {
+                if (audio_device != 0) {
                     u64 frequency    = SDL_GetPerformanceFrequency();
                     u64 begin_time   = SDL_GetPerformanceCounter();
-                    u64   end_time   = 0;
-                    u64 delta_time   = 0;
                     u64 begin_cycles = __rdtsc();
-                    u64   end_cycles = 0;
-                    u64 delta_cycles = 0;
-
-                    // struct AudioBuffer audio_buffer = {};
-                    // audio_buffer.tone_hz            = 256;
-                    // audio_buffer.samples_per_second = audio_spec.freq;
-                    // audio_buffer.bytes_per_sample   = sizeof(i16) * 2;
+                    u64 end_time     = 0;
+                    u64 end_cycles   = 0;
 
                     struct InputState input_state = {};
 
                     SDL_Event event;
                     while (!is_close_requested) {
-                          end_time   = begin_time;
+                        end_time     = begin_time;
+                        end_cycles   = begin_cycles;
                         begin_time   = SDL_GetPerformanceCounter();
-                        delta_time   = begin_time - end_time;
-                          end_cycles = begin_cycles;
                         begin_cycles = __rdtsc();
-                        delta_cycles = begin_cycles - end_cycles;
 
-                        f64 mspf = ((f64)delta_time * 1000.0) / (f64)frequency;
-                        f64 fps  = (f64)frequency / (f64)delta_time;
-                        f64 mcpf = (f64)delta_cycles / (1000.0 * 1000.0);
+                        f32 seconds_elapsed = ((f32)begin_time   - (f32)end_time) / (f32)frequency;
+                        f32  cycles_elapsed = ((f32)begin_cycles - (f32)end_cycles);
+
+                        // NOTE(Hector):
+                        // The timing stuff calculated above is for the previous frame, so we're going to wait
+                        // here to make sure that we're actually taking the correct amount of time per frame.
+                        // I'm not 100% sure we need to do this, since we're already using vsync. I guess just
+                        // because my monitor allows vsync, doesn't mean they all do. The quandaries...
+                        if (seconds_elapsed < timing_info.target_seconds_per_frame) {
+                            u32 ms_to_sleep = (u32)(timing_info.target_seconds_per_frame - seconds_elapsed) * 1000;
+                            if (ms_to_sleep >= 1) ms_to_sleep -= 1;
+
+                            SDL_Delay(ms_to_sleep);
+
+                            #define SecondsElapsed() ((f32)SDL_GetPerformanceCounter() - (f32)end_time) / (f32)frequency
+                            while (SecondsElapsed() < timing_info.target_seconds_per_frame);
+                        }
 
                         while (SDL_PollEvent(&event)) {
                             switch (event.type) {
@@ -402,66 +460,126 @@ i32 main(i32 argc, char** argv) {
                                     }
                                     break;
 
-                                case SDL_CONTROLLERDEVICEADDED:
+                                case SDL_MOUSEMOTION:
+                                    input_state.mouse_x = event.motion.x;
+                                    input_state.mouse_y = event.motion.y;
                                     break;
-                                case SDL_CONTROLLERDEVICEREMOVED:
-                                    break;
-                                case SDL_CONTROLLERDEVICEREMAPPED:
-                                    break;
+
+                                case SDL_MOUSEBUTTONDOWN:
+                                case SDL_MOUSEBUTTONUP: {
+                                    u8   button   =  event.button.button;
+                                    bool  is_down = (event.button.state == SDL_PRESSED);
+                                    bool was_down = (event.button.state == SDL_RELEASED);
+
+                                    input_state.mouse_double_click = event.button.clicks == 2;
+
+                                    if (button == SDL_BUTTON_LEFT) {
+                                        input_state.mouse_left. is_down =  is_down;
+                                        input_state.mouse_left.was_down = was_down;
+                                    } else if (button == SDL_BUTTON_RIGHT) {
+                                        input_state.mouse_right. is_down =  is_down;
+                                        input_state.mouse_right.was_down = was_down;
+                                    } else { /* do nothing */ }
+                                } break;
 
                                 case SDL_KEYDOWN:
                                 case SDL_KEYUP: {
-                                    SDL_Keycode keycode     =  event.key.keysym.sym;
-                                    bool         is_pressed = (event.key.state  == SDL_PRESSED);
-                                    bool        was_pressed = (event.key.state  == SDL_RELEASED)
-                                                           || (event.key.repeat != 0);
+                                    SDL_Keycode keycode  =  event.key.keysym.sym;
+                                    bool         is_down = (event.key.state  == SDL_PRESSED);
+                                    bool        was_down = (event.key.state  == SDL_RELEASED)
+                                                        || (event.key.repeat != 0);
 
-                                    if (is_pressed != was_pressed) {
-                                        SDL_Log("Is: %i, Was: %i", is_pressed, was_pressed);
-
-                                        // Right handed controls
-                                             if (keycode == SDLK_w) {}
-                                        else if (keycode == SDLK_a) {}
-                                        else if (keycode == SDLK_s) {}
-                                        else if (keycode == SDLK_d) {}
-                                        else if (keycode == SDLK_q) {}
-                                        else if (keycode == SDLK_e) {}
-                                        else if (keycode == SDLK_LSHIFT) {}
-                                        // Left handed controls
-                                        else if (keycode == SDLK_i) {}
-                                        else if (keycode == SDLK_j) {}
-                                        else if (keycode == SDLK_k) {}
-                                        else if (keycode == SDLK_l) {}
-                                        else if (keycode == SDLK_o) {}
-                                        else if (keycode == SDLK_u) {}
-                                        else if (keycode == SDLK_RSHIFT) {}
-                                        // Misc
-                                        else if (keycode == SDLK_ESCAPE) { is_close_requested = true; }
-                                        else { /* do nothing */ }
+                                    // Right handed controls
+                                    if (keycode == SDLK_w) {
+                                        input_state.move_up. is_down =  is_down;
+                                        input_state.move_up.was_down = was_down;
+                                    } else if (keycode == SDLK_a) {
+                                        input_state.move_left. is_down =  is_down;
+                                        input_state.move_left.was_down = was_down;
+                                    } else if (keycode == SDLK_s) {
+                                        input_state.move_down. is_down =  is_down;
+                                        input_state.move_down.was_down = was_down;
+                                    } else if (keycode == SDLK_d) {
+                                        input_state.move_right. is_down =  is_down;
+                                        input_state.move_right.was_down = was_down;
+                                    } else if (keycode == SDLK_q) {
+                                        input_state.inventory. is_down =  is_down;
+                                        input_state.inventory.was_down = was_down;
+                                    } else if (keycode == SDLK_e) {
+                                        input_state.action. is_down =  is_down;
+                                        input_state.action.was_down = was_down;
+                                    } else if (keycode == SDLK_LSHIFT) {
+                                        input_state.maintain_facing. is_down =  is_down;
+                                        input_state.maintain_facing.was_down = was_down;
                                     }
+                                    // Left handed controls
+                                    else if (keycode == SDLK_i) {
+                                        input_state.move_up. is_down =  is_down;
+                                        input_state.move_up.was_down = was_down;
+                                    } else if (keycode == SDLK_j) {
+                                        input_state.move_left. is_down =  is_down;
+                                        input_state.move_left.was_down = was_down;
+                                    } else if (keycode == SDLK_k) {
+                                        input_state.move_down. is_down =  is_down;
+                                        input_state.move_down.was_down = was_down;
+                                    } else if (keycode == SDLK_l) {
+                                        input_state.move_right. is_down =  is_down;
+                                        input_state.move_right.was_down = was_down;
+                                    } else if (keycode == SDLK_o) {
+                                        input_state.inventory. is_down =  is_down;
+                                        input_state.inventory.was_down = was_down;
+                                    } else if (keycode == SDLK_u) {
+                                        input_state.action. is_down =  is_down;
+                                        input_state.action.was_down = was_down;
+                                    } else if (keycode == SDLK_RSHIFT) {
+                                        input_state.maintain_facing. is_down =  is_down;
+                                        input_state.maintain_facing.was_down = was_down;
+                                    }
+                                    // Misc
+                                    else if (keycode == SDLK_ESCAPE) {
+                                        input_state.escape. is_down =  is_down;
+                                        input_state.escape.was_down = was_down;
+                                    } else { /* do nothing */ }
                                 } break;
                             }
                         }
 
+                        // TODO(Hector):
+                        // Actually work out how many bytes we need to write. Probably need to use seconds_elapsed
+                        // to know how long the last frame took and something something...
+                        u32 one_frames_worth = audio_buffer.samples_per_second
+                                             * audio_buffer.bytes_per_sample
+                                             * timing_info.target_seconds_per_frame;
+
+                        u32 queued_audio_bytes = SDL_GetQueuedAudioSize(audio_device);
+                        u32 bytes_to_write     = one_frames_worth - queued_audio_bytes;
+                        printf("%i %i %i\n", one_frames_worth, queued_audio_bytes, bytes_to_write);
+
+                        audio_buffer.samples      = malloc(bytes_to_write);
+                        audio_buffer.samples_size = bytes_to_write;
+
                         SDL_LockTexture(texture, NULL, &offscreen_buffer.pixels, &offscreen_buffer.pitch);
-                        UpdateAndRender(&memory, &input_state, &job_queue, &offscreen_buffer);
+                        UpdateAndRender(&memory, &input_state, &job_queue, &offscreen_buffer, &audio_buffer);
                         SDL_UnlockTexture(texture);
+
+                        SDL_QueueAudio(audio_device, audio_buffer.samples, bytes_to_write);
+                        free(audio_buffer.samples);
+                        // TODO(Hector):
+                        // Clean this up.
+                        static bool audio_is_paused = true;
+                        if (audio_is_paused) {
+                            audio_is_paused = false;
+                            SDL_PauseAudioDevice(audio_device, audio_is_paused);
+                        }
+
                         SDL_RenderCopy(renderer, texture, NULL, NULL);
                         SDL_RenderPresent(renderer);
-
-                        // SDL_Log("%.02f f/s, %.02f ms/f, %.02f Mcy/f\n", fps, mspf, mcpf);
                     }
+
+                    CloseAudio(audio_buffer);
                 } else {
-                    // Complain.
-                    SDL_Log("Unable to get the desired audio format.");
+                    SDL_Log("Unable to initialise audio. %s\n", SDL_GetError());
                 }
-
-                SDL_CloseAudio();
-
-                // NOTE(Hector):
-                // No need to close the joystick separately because it's part of the controller.
-                SDL_GameControllerClose(controller);
-                SDL_HapticClose(haptic);
 
                 FreeMemory(memory);
             } else {

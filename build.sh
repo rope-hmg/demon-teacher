@@ -7,6 +7,7 @@ clang                       \
     -g                      \
     -o ./demon_teacher      \
     -D INTERNAL             \
+    -Wall                   \
     ../src/main.c           \
     `sdl2-config --static-libs`
 popd
